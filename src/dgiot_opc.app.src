@@ -1,0 +1,7 @@
+{application, dgiot_opc,
+    [{description, "数蛙工业控制"},
+        {vsn, "4.0.0"},
+        {modules, []},
+        {registered, [dgiot_opc_sup]},
+        {applications, [kernel, stdlib, shuwa_framework]},
+        {mod, {dgiot_opc_app, []}}]}.
