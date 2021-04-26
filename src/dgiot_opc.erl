@@ -16,26 +16,12 @@
 -module(dgiot_opc).
 -author("johnliu").
 
--export([start_http/0, docroot/0]).
-
 -export([
+    create_konva/2,
     scan_opc/1,
     read_opc/4,
-    create_device/3,
     process_opc/2
 ]).
-
-start_http() ->
-    Port = application:get_env(dgiot_opc, port, 6080),
-    DocRoot = docroot(),
-    shuwa_http_server:start_http(?MODULE, Port, DocRoot).
-
-
-docroot() ->
-    {file, Here} = code:is_loaded(?MODULE),
-    Dir = filename:dirname(filename:dirname(Here)),
-    Root = shuwa_httpc:url_join([Dir, "/priv/"]),
-    Root ++ "www".
 
 
 %% 下发扫描OPC命令
@@ -51,43 +37,6 @@ scan_opc(#{<<"OPCSEVER">> := OpcServer}) ->
         <<"opcserver">> => OpcServer
     },
     shuwa_mqtt:publish(<<"opcserver">>, <<"dgiot_opc_da">>, jsx:encode(Payload)).
-
-%%    {
-%%        "Name":"Money",
-%%        "HasChildren":false,
-%%        "IsItem":true,
-%%        "ItemId":"Write Only.Money",
-%%        "ItemProperties":{
-%%            "ErrorId":{
-%%                "Failed":false,
-%%                "Succeeded":true
-%%            },
-%%            "Properties":[
-%%
-%%            ]
-%%        },
-%%        "IsHint":false
-%%    },
-create_device(#{
-    <<"app">> := App,
-    <<"ACL">> := Acl,
-    <<"devaddr">> := DtuAddr,
-    <<"parentId">> := ParentId}, OPCPRODUCT, Items) ->
-    pass.
-
-get_thing(Product) ->
-    case shuwa_parse:get_objectid(<<"Product">>, Product) of
-        #{<<"objectId">> := ProductId} ->
-            #{<<"objectId">> := DictId} =
-                shuwa_parse:get_objectid(<<"Dict">>, #{<<"key">> => ProductId, <<"type">> => <<"Product">>}),
-            case shuwa_parse:get_object(<<"Dict">>, DictId) of
-                {ok, #{<<"data">> := #{<<"thing">> := Thing}}} ->
-                    Thing;
-                _ -> #{<<"properties">> =>[]}
-            end;
-        _ -> #{<<"properties">> =>[]}
-    end.
-
 
 read_opc(ChannelId, OpcServer, DevAddr, Instruct) ->
     [DevAddr | _] = maps:keys(Instruct),
@@ -119,4 +68,67 @@ process_opc(ChannelId, Payload) ->
             shuwa_bridge:send_log(ChannelId, "to_task: ~ts", [unicode:characters_to_list(jsx:encode(Items))]),
             shuwa_mqtt:publish(DevAddr, NewTopic, jsx:encode(Items));
         _ -> pass
+    end.
+
+create_konva(ProductId, Map) ->
+    {Count, Shape} =
+        maps:fold(fun(Type, Items, {Index, Acc}) ->
+            IsSystem = lists:any(fun(E) ->
+                lists:member(E, [<<"_System">>, <<"_Statistics">>, <<"_ThingWorx">>, <<"_DataLogger">>])
+                                 end, binary:split(Type, <<$.>>, [global, trim])),
+            case IsSystem of
+                true -> {Index, Acc};
+                _ ->
+                    lists:foldl(fun(Item, {Index1, Acc1}) ->
+                        case Item of
+                            #{<<"ItemId">> := ItemId, <<"Name">> := Name} ->
+                                {Index1 + 1, Acc1 ++ [ #{
+                                    <<"type">> => <<"text">>,
+                                    <<"x">> => 100,
+                                    <<"y">> => 30 + Index1 * 30,
+                                    <<"id">> => Name,
+                                    <<"fill">> => <<"#e579f2">>,
+                                    <<"text">> => ItemId,
+                                    <<"fontSize">> => 26,
+                                    <<"fontFamily">> => <<"Calibri">>}]
+                                };
+                            _ ->
+                                {Index1, Acc1}
+                        end
+                                end, {Index, Acc}, Items)
+            end
+                  end, {0, []}, Map),
+    case Count of
+        0 ->
+            pass;
+        _ ->
+            Konva = #{
+                <<"Stage">> => #{
+                    <<"id">> => <<"stage_", ProductId/binary>>,
+                    <<"width">> => 1643,
+                    <<"height">> => 248
+                },
+                <<"Layer">> => #{
+                    <<"x">> => 480,
+                    <<"y">> => 21,
+                    <<"id">> => <<"layer_", ProductId/binary>>,
+                    <<"fill">> => <<"#e579f2">>,
+                    <<"text">> => <<"">>,
+                    <<"fontSize">> => 26,
+                    <<"fontFamily">> => <<"Calibri">>
+                },
+                <<"Group">> => #{
+                    <<"x">> => 120,
+                    <<"y">> => 40,
+                    <<"id">> => <<"group_", ProductId/binary>>,
+                    <<"rotation">> => 20
+                }
+            },
+            case shuwa_parse:get_object(<<"Product">>, ProductId) of
+                {ok, #{<<"config">> := _Config}} ->
+                    pass;
+                _ ->
+                    shuwa_parse:update_object(<<"Product">>, ProductId,
+                        #{<<"config">> => #{<<"konva">> => Konva#{<<"Shape">> => Shape}}})
+            end
     end.
