@@ -80,6 +80,8 @@ init(?TYPE, ChannelId, ChannelArgs) ->
 handle_init(State) ->
     shuwa_mqtt:subscribe(<<"dgiot_opc_da_ack">>),
     shuwa_mqtt:subscribe(<<"dgiot_opc_da_scan">>),
+    shuwa_parse:subscribe(<<"Device">>, post),
+    shuwa_parse:subcribe(<<"Device/*">>,post),
     erlang:send_after(1000 * 10, self(), scan_opc),
     {ok, State}.
 
@@ -87,6 +89,10 @@ handle_init(State) ->
 handle_event(EventId, Event, _State) ->
     lager:info("channel ~p, ~p", [EventId, Event]),
     ok.
+
+handle_message({sync_parse, Args},State) ->
+   lager:info("sync_parse ~p",[Args]),
+    {ok, State};
 
 handle_message(scan_opc, #state{env = Env} = State) ->
     dgiot_opc:scan_opc(Env),

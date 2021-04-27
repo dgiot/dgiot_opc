@@ -85,11 +85,11 @@ create_konva(ProductId, Map) ->
                                 {Index1 + 1, Acc1 ++ [ #{
                                     <<"type">> => <<"text">>,
                                     <<"x">> => 100,
-                                    <<"y">> => 30 + Index1 * 30,
+                                    <<"y">> => 130 + Index1 * 30,
                                     <<"id">> => Name,
                                     <<"fill">> => <<"#e579f2">>,
                                     <<"text">> => ItemId,
-                                    <<"fontSize">> => 26,
+                                    <<"fontSize">> => 20,
                                     <<"fontFamily">> => <<"Calibri">>}]
                                 };
                             _ ->
@@ -104,24 +104,19 @@ create_konva(ProductId, Map) ->
         _ ->
             Konva = #{
                 <<"Stage">> => #{
-                    <<"id">> => <<"stage_", ProductId/binary>>,
-                    <<"width">> => 1643,
-                    <<"height">> => 248
+                    <<"id">> => <<"stage_", ProductId/binary>>
                 },
                 <<"Layer">> => #{
-                    <<"x">> => 480,
-                    <<"y">> => 21,
                     <<"id">> => <<"layer_", ProductId/binary>>,
                     <<"fill">> => <<"#e579f2">>,
-                    <<"text">> => <<"">>,
-                    <<"fontSize">> => 26,
+                    <<"x">> => 200,
+                    <<"y">> => 30,
+                    <<"text">> => <<"OPCDA点位信息">>,
+                    <<"fontSize">> => 40,
                     <<"fontFamily">> => <<"Calibri">>
                 },
                 <<"Group">> => #{
-                    <<"x">> => 120,
-                    <<"y">> => 40,
-                    <<"id">> => <<"group_", ProductId/binary>>,
-                    <<"rotation">> => 20
+                    <<"id">> => <<"group_", ProductId/binary>>
                 }
             },
             case shuwa_parse:get_object(<<"Product">>, ProductId) of
