@@ -25,7 +25,7 @@
 
 
 %% 下发扫描OPC命令
-%% topic: shuwa_opc_da
+%% topic: dgiot_opc_da
 %% payload：
 %%{
 %%"cmdtype":"scan",
@@ -39,22 +39,22 @@ scan_opc(#{<<"OPCSEVER">> := OpcServer}) ->
     shuwa_mqtt:publish(<<"opcserver">>, <<"dgiot_opc_da">>, jsx:encode(Payload)).
 
 read_opc(ChannelId, OpcServer, DevAddr, Instruct) ->
-    [DevAddr | _] = maps:keys(Instruct),
-    Values = maps:get(DevAddr, Instruct, #{}),
-    Items =
-        maps:fold(fun(K, _V, Acc) ->
-            case Acc of
-                <<"">> -> K;
-                _ -> <<Acc/binary, ",", K/binary>>
-            end
-                  end, <<"">>, Values),
+%%    [DevAddr | _] = maps:keys(Instruct),
+%%    Values = maps:get(DevAddr, Instruct, #{}),
+%%    Items =
+%%        maps:fold(fun(K, _V, Acc) ->
+%%            case Acc of
+%%                <<"">> -> K;
+%%                _ -> <<Acc/binary, ",", K/binary>>
+%%            end
+%%                  end, <<"">>, Values),
     Payload = #{
         <<"cmdtype">> => <<"read">>,
         <<"opcserver">> => OpcServer,
         <<"group">> => DevAddr,
-        <<"items">> => Items
+        <<"items">> => Instruct
     },
-    shuwa_bridge:send_log(ChannelId, "to_opc: ~p: ~p  ~ts ", [OpcServer, DevAddr, unicode:characters_to_list(Items)]),
+    shuwa_bridge:send_log(ChannelId, "to_opc: ~p: ~p  ~ts ", [OpcServer, DevAddr, unicode:characters_to_list(Instruct)]),
     shuwa_mqtt:publish(<<"opcserver">>, <<"dgiot_opc_da">>, jsx:encode(Payload)).
 
 process_opc(ChannelId, Payload) ->
