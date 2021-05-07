@@ -83,8 +83,7 @@ init(?TYPE, ChannelId, ChannelArgs) ->
 handle_init(State) ->
     shuwa_mqtt:subscribe(<<"dgiot_opc_da_ack">>),
     shuwa_mqtt:subscribe(<<"dgiot_opc_da_scan">>),
-%%    shuwa_parse:subscribe(<<"Device">>, post),
-%%    shuwa_parse:subscribe(<<"Device/*">>, post),
+    shuwa_parse:subscribe(<<"Device">>, post),
 %%    erlang:send_after(1000 * 10, self(), scan_opc),
     erlang:send_after(1000 * 10, self(), send_opc),
     {ok, State}.
