@@ -131,8 +131,6 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, env = Env} = State
                             _ -> Acc
                         end
                                      end, #{}, Map1),
-%%                    ,
-
                     Base64 = get_optshape(ProductId, DeviceId, Data),
                     Url1 = <<"http://132.232.12.21/iotapi/send_topo">>,
                     Data1 = #{<<"productid">> => ProductId, <<"devaddr">> => Devaddr, <<"base64">> => Base64},
@@ -144,7 +142,6 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, env = Env} = State
                         _ -> pass
 
                     end,
-
                     shuwa_tdengine_adapter:save(ProductId, Devaddr, Data);
                 _ ->
                     pass
