@@ -30,8 +30,6 @@
 
 start(_StartType, _StartArgs) ->
     {ok, Sup} = dgiot_opc_sup:start_link(),
-    Spec =  dgiot_opc:start_http(),
-    {ok, _} = supervisor:start_child(Sup, Spec),
     {ok, Sup}.
 
 stop(_State) ->
