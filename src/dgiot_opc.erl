@@ -66,8 +66,8 @@ process_opc(ChannelId, Payload) ->
         ProductId ->
             NewTopic = <<"thing/", ProductId/binary, "/", DevAddr/binary, "/post">>,
             shuwa_bridge:send_log(ChannelId, "to_task: ~ts", [unicode:characters_to_list(jsx:encode(Items))]),
-            shuwa_mqtt:publish(DevAddr, NewTopic, jsx:encode(Items));
-        _ -> pass
+            shuwa_mqtt:publish(DevAddr, NewTopic, jsx:encode(Items))
+%%        _ -> pass
     end.
 
 create_konva(ProductId, Map) ->

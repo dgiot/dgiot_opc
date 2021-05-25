@@ -73,7 +73,8 @@ init(?TYPE, ChannelId, ChannelArgs) ->
     {ProductId, DeviceId, Devaddr} = get_product(ChannelId),
     State = #state{
         id = ChannelId,
-        env = ChannelArgs#{<<"productid">> => ProductId,
+        env = ChannelArgs#{
+            <<"productid">> => ProductId,
             <<"deviceid">> => DeviceId,
             <<"devaddr">> => Devaddr}
     },
@@ -84,7 +85,7 @@ handle_init(State) ->
     shuwa_mqtt:subscribe(<<"dgiot_opc_da_ack">>),
     shuwa_mqtt:subscribe(<<"dgiot_opc_da_scan">>),
     shuwa_parse:subscribe(<<"Device">>, post),
-%%    erlang:send_after(1000 * 10, self(), scan_opc),
+    erlang:send_after(1000 * 5, self(), scan_opc),
     erlang:send_after(1000 * 10, self(), send_opc),
     {ok, State}.
 
@@ -105,10 +106,29 @@ handle_message(scan_opc, #state{env = Env} = State) ->
 %%    INSPEC.小闭式台位计测.I_OPC,INSPEC.小闭式台位计测.DJZS_OPC,INSPEC.小闭式台位计测.SWD_OPC,
 %%    INSPEC.小闭式台位计测.DCLL_OPC,INSPEC.小闭式台位计测.JKYL_OPC,INSPEC.小闭式台位计测.CKYL_OPC","noitemid":"000"}
 handle_message(send_opc, #state{id = ChannelId, env = Env} = State) ->
-    #{<<"OPCSEVER">> := OpcServer} = Env,
-    Instruct = <<"INSPEC.小闭式台位计测.U_OPC,INSPEC.小闭式台位计测.P_OPC,INSPEC.小闭式台位计测.I_OPC,INSPEC.小闭式台位计测.DJZS_OPC,INSPEC.小闭式台位计测.SWD_OPC,INSPEC.小闭式台位计测.DCLL_OPC,INSPEC.小闭式台位计测.JKYL_OPC,INSPEC.小闭式台位计测.CKYL_OPC"/utf8>>,
-    dgiot_opc:read_opc(ChannelId, OpcServer, <<"XBS001">>, Instruct),
-    erlang:send_after(10 * 1000, self(), send_opc),
+    #{<<"OPCSEVER">> := OpcServer, <<"productid">> := ProductId} = Env,
+
+    case shuwa_parse:get_object(<<"Product">>, ProductId) of
+        {ok, #{<<"name">> := ProductName}} ->
+            ProductName;
+        _ ->
+            ProductName = <<>>
+    end,
+
+    case shuwa_parse:get_object(<<"Product">>, ProductId) of
+        {ok, #{<<"thing">> := Thing}} ->
+            #{<<"properties">> := Properties} = Thing,
+
+            Identifier = [maps:get(<<"scan_instruct">>, H) || H <- Properties],
+            Identifier1 = [binary:bin_to_list(H) || H <- Identifier];
+        _ ->
+            Identifier1 = <<>>
+    end,
+    Instruct = [ X ++ "," || X <- Identifier1],
+    Instruct1 = lists:droplast(lists:concat(Instruct)),
+    Instruct2 = erlang:list_to_binary(Instruct1),
+    dgiot_opc:read_opc(ChannelId, OpcServer, ProductName, Instruct2),
+    erlang:send_after(2000 * 10, self(), send_opc),
     {ok, State};
 
 
@@ -116,14 +136,14 @@ handle_message(send_opc, #state{id = ChannelId, env = Env} = State) ->
 handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, env = Env} = State) ->
     Payload = shuwa_mqtt:get_payload(Msg),
     #{<<"productid">> := ProductId, <<"deviceid">> := DeviceId, <<"devaddr">> := Devaddr} = Env,
-    shuwa_bridge:send_log(ChannelId, "from opc scan: ~p  ", [unicode:characters_to_list(Payload)]),
+    shuwa_bridge:send_log(ChannelId, "from opc scan: ~p  ", [Payload]),
     case jsx:is_json(Payload) of
         false ->
             pass;
         true ->
             case jsx:decode(Payload, [return_maps]) of
-                #{<<"status">> := 0} = Map ->
-                    [Map1 | _] = maps:values(maps:without([<<"status">>], Map)),
+                #{<<"status">> := 0} = Map0 ->
+                    [Map1 | _] = maps:values(maps:without([<<"status">>], Map0)),
                     Data = maps:fold(fun(K, V, Acc) ->
                         case binary:split(K, <<$.>>, [global, trim]) of
                             [_, _, Key] ->
@@ -132,7 +152,7 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, env = Env} = State
                         end
                                      end, #{}, Map1),
                     Base64 = get_optshape(ProductId, DeviceId, Data),
-                    Url1 = <<"http://132.232.12.21/iotapi/send_topo">>,
+                    Url1 = <<"http://127.0.0.1/iotapi/send_topo">>,
                     Data1 = #{<<"productid">> => ProductId, <<"devaddr">> => Devaddr, <<"base64">> => Base64},
                     push(Url1, Data1),
                     case shuwa_data:get({dev, status, DeviceId}) of
@@ -145,9 +165,34 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, env = Env} = State
                     shuwa_tdengine_adapter:save(ProductId, Devaddr, Data);
                 _ ->
                     pass
+            end,
+            Map = jsx:decode(Payload, [return_maps]),
+            List = maps:to_list(Map),
+            D = dict:from_list(List),
+            Predicate2=fun(X) ->
+                X /= 95 end, % '_' -> 95 Unicode
+            Predicate = fun(K,_V) ->
+                lists:all(Predicate2,binary:bin_to_list(K)) end,
+
+            D1 = dict:filter(Predicate, D),
+            List1=dict:to_list(D1),
+            case erlang:length(List1) of
+                1 ->
+                    {_,Dianwei} = lists:last(List1), %%Dianwei = [{"Name":"Acrel","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.Acrel","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"current","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.current","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"effect","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.effect","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"factor","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.factor","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"flow","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵 模拟.flow","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"head","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.head","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"opening","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.opening","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"power","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.power","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"pressure_in","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.pressure_in","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"pressure_out","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.pressure_out","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"speed","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模 拟.speed","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"switch","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.switch","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"temperature","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.temperature","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"torque","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.torque","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false},{"Name":"vol","HasChildren":false,"IsItem":true,"ItemId":"opc.水泵模拟.vol","ItemProperties":{"ErrorId":{"Failed":false,"Succeeded":true},"Properties":[]},"IsHint":false}]
+                    Name_and_item = get_name_and_itemid(Dianwei),
+                    Final_Properties = create_final_Properties(Name_and_item),
+                    case shuwa_parse:get_object(<<"Product">>, ProductId) of
+                        {ok, #{<<"ACL">> := _Acl, <<"devType">> := _DevType}} ->
+                            shuwa_parse:update_object(<<"Product">>, ProductId, #{<<"thing">> => #{<<"properties">> => Final_Properties}});
+                        Error2 -> lager:info("Error2 ~p ", [Error2])
+                    end;
+                _ ->
+                    pass
+
             end
     end,
     {ok, State};
+
 
 handle_message(Message, State) ->
     lager:info("channel ~p", [Message]),
@@ -194,3 +239,39 @@ push(Url, Data) ->
     Data1 = shuwa_utils:to_list(jsx:encode(Data)),
     httpc:request(post, {Url1, [], "application/json", Data1}, [], []).
 
+
+%%创建物模型
+create_Properties({Name,Identifier}) ->
+    #{<<"accessMode">> => <<"r">>,
+        <<"dataForm">> =>
+        #{<<"address">> =>
+        <<"00000000">>,
+            <<"byteorder">> => <<"big">>,
+            <<"collection">> => <<"%s">>,
+            <<"control">> => <<"%q">>,<<"data">> => <<"null">>,
+            <<"offset">> => 0,<<"protocol">> => <<"normal">>,
+            <<"quantity">> => <<"null">>,<<"rate">> => 1,
+            <<"strategy">> => <<"20">>},
+        <<"dataType">> =>
+        #{<<"specs">> =>
+        #{<<"max">> => 100,<<"min">> => 0,
+            <<"step">> => 0.01,<<"unit">> => <<>>},
+            <<"type">> => <<"float">>},
+        <<"identifier">> => Name,
+        <<"name">> => Name,
+        <<"scan_instruct">> => Identifier,
+        <<"required">> => true}.
+
+
+
+create_final_Properties(List) -> [ create_Properties(X) || X <- List].
+
+
+add_to_list(Map) ->
+    #{<<"Name">> := Name,<<"ItemId">> := ItemId } = Map,
+    [{Name,ItemId}].
+
+get_name_and_itemid([H|T]) ->
+    add_to_list(H) ++ get_name_and_itemid(T);
+get_name_and_itemid([]) ->
+    [].
