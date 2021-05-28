@@ -107,28 +107,20 @@ handle_message(scan_opc, #state{env = Env} = State) ->
 %%    INSPEC.小闭式台位计测.DCLL_OPC,INSPEC.小闭式台位计测.JKYL_OPC,INSPEC.小闭式台位计测.CKYL_OPC","noitemid":"000"}
 handle_message(send_opc, #state{id = ChannelId, env = Env} = State) ->
     #{<<"OPCSEVER">> := OpcServer, <<"productid">> := ProductId} = Env,
-
     case shuwa_parse:get_object(<<"Product">>, ProductId) of
-        {ok, #{<<"name">> := ProductName}} ->
-            ProductName;
-        _ ->
-            ProductName = <<>>
-    end,
-
-    case shuwa_parse:get_object(<<"Product">>, ProductId) of
-        {ok, #{<<"thing">> := Thing}} ->
+        {ok, #{<<"thing">> := Thing,<<"name">> := ProductName}} ->
             #{<<"properties">> := Properties} = Thing,
 
             Identifier = [maps:get(<<"scan_instruct">>, H) || H <- Properties],
-            Identifier1 = [binary:bin_to_list(H) || H <- Identifier];
+            Identifier1 = [binary:bin_to_list(H) || H <- Identifier],
+            Instruct = [ X ++ "," || X <- Identifier1],
+            Instruct1 = lists:droplast(lists:concat(Instruct)),
+            Instruct2 = erlang:list_to_binary(Instruct1),
+            dgiot_opc:read_opc(ChannelId, OpcServer, ProductName, Instruct2),
+            erlang:send_after(2000 * 10, self(), send_opc);
         _ ->
-            Identifier1 = <<>>
+            handle_message(send_opc, #state{id = ChannelId, env = Env} = State)
     end,
-    Instruct = [ X ++ "," || X <- Identifier1],
-    Instruct1 = lists:droplast(lists:concat(Instruct)),
-    Instruct2 = erlang:list_to_binary(Instruct1),
-    dgiot_opc:read_opc(ChannelId, OpcServer, ProductName, Instruct2),
-    erlang:send_after(2000 * 10, self(), send_opc),
     {ok, State};
 
 
@@ -182,7 +174,7 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, env = Env} = State
                     Name_and_item = get_name_and_itemid(Dianwei),
                     Final_Properties = create_final_Properties(Name_and_item),
                     case shuwa_parse:get_object(<<"Product">>, ProductId) of
-                        {ok, #{<<"ACL">> := _Acl, <<"devType">> := _DevType}} ->
+                        {ok, _} ->
                             shuwa_parse:update_object(<<"Product">>, ProductId, #{<<"thing">> => #{<<"properties">> => Final_Properties}});
                         Error2 -> lager:info("Error2 ~p ", [Error2])
                     end;
