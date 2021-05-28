@@ -174,8 +174,13 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, env = Env} = State
                     Name_and_item = get_name_and_itemid(Dianwei),
                     Final_Properties = create_final_Properties(Name_and_item),
                     case shuwa_parse:get_object(<<"Product">>, ProductId) of
-                        {ok, _} ->
-                            shuwa_parse:update_object(<<"Product">>, ProductId, #{<<"thing">> => #{<<"properties">> => Final_Properties}});
+                        {ok, Result} ->
+                            case maps:is_key(<<"thing">>,Result) of
+                                false ->
+                                    shuwa_parse:update_object(<<"Product">>, ProductId, #{<<"thing">> => #{<<"properties">> => Final_Properties}});
+                                true ->
+                                    pass
+                            end;
                         Error2 -> lager:info("Error2 ~p ", [Error2])
                     end;
                 _ ->
@@ -267,3 +272,7 @@ get_name_and_itemid([H|T]) ->
     add_to_list(H) ++ get_name_and_itemid(T);
 get_name_and_itemid([]) ->
     [].
+
+
+%%%创建组态config
+
