@@ -162,10 +162,7 @@ read_opc_ack(Payload, ProductId, DeviceId, Devaddr) ->
                     _ -> Acc
                 end
                              end, #{}, Map2),
-            Base64 = get_optshape(ProductId, DeviceId, Data),
-            Url1 = <<"http://127.0.0.1:5080/iotapi/send_topo">>,
-            Data1 = #{<<"productid">> => ProductId, <<"devaddr">> => Devaddr, <<"base64">> => Base64},
-            push(Url1, Data1),
+            dgiot_topo:push(ProductId, Devaddr, DeviceId, Payload),
             %%  -------------------------------- 设备上线状态修改
             case shuwa_data:get({dev, status, DeviceId}) of
                 not_find ->
@@ -214,9 +211,6 @@ push(Url, Data) ->
     Url1 = shuwa_utils:to_list(Url),
     Data1 = shuwa_utils:to_list(jsx:encode(Data)),
     httpc:request(post, {Url1, [], "application/json", Data1}, [], []).
-
-
-
 
 
 %%scan后创建物模型
