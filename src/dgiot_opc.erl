@@ -162,7 +162,7 @@ read_opc_ack(Payload, ProductId, DeviceId, Devaddr) ->
                     _ -> Acc
                 end
                              end, #{}, Map2),
-            dgiot_topo:push(ProductId, Devaddr, DeviceId, Payload),
+            dgiot_topo:push(ProductId, Devaddr, DeviceId, Data),
             %%  -------------------------------- 设备上线状态修改
             case shuwa_data:get({dev, status, DeviceId}) of
                 not_find ->
