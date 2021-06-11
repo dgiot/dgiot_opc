@@ -60,6 +60,20 @@
         description => #{
             zh => <<"OPC分组"/utf8>>
         }
+    },
+     <<"ico">> => #{
+        order => 102,
+        type => string,
+        required => false,
+        default => <<"http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/shuwa_tech/zh/product/dgiot/channel/OPC_ICO.png">>,
+        title => #{
+            en => <<"channel ICO">>,
+            zh => <<"通道ICO"/utf8>>
+        },
+        description => #{
+            en => <<"channel ICO">>,
+            zh => <<"通道ICO"/utf8>>
+        }
     }
 }).
 
