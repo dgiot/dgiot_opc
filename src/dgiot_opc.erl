@@ -153,16 +153,21 @@ read_opc_ack(Payload, ProductId, DeviceId, Devaddr) ->
                         V3 = V1 ++ ": " ++ V2 ++ " " ++ V1_unit ,
                         Acc#{K => V3};
                     _ -> Acc
-                        end
-                            end, #{}, Map2),
+                end
+                             end, #{}, Map2),
             Data2 = maps:fold(fun(K, V, Acc) ->
                 case binary:split(K, <<$.>>, [global, trim]) of
                     [_, _, K1] ->
                         Acc#{K1 => V};
                     _ -> Acc
                 end
-                             end, #{}, Map2),
-            dgiot_topo:push(ProductId, Devaddr, DeviceId, Data),
+                              end, #{}, Map2),
+            try dgiot_topo:push(ProductId, Devaddr, DeviceId, Data)
+            catch  _:_ ->
+                lager:info("{ TOPO PUSH ERROR},dgiot_topo:push(~p, ~p, ~p, ~p)",[ProductId, Devaddr, DeviceId, Data])
+            after
+                pass
+            end,
             %%  -------------------------------- 设备上线状态修改
             case shuwa_data:get({dev, status, DeviceId}) of
                 not_find ->
@@ -172,7 +177,12 @@ read_opc_ack(Payload, ProductId, DeviceId, Devaddr) ->
 
             end,
             %% --------------------------------  数据存TD库
-            shuwa_tdengine_adapter:save(ProductId, Devaddr, Data2);
+            try shuwa_tdengine_adapter:save(ProductId, Devaddr, Data2)
+            catch _:_ ->
+                lager:info("{ TD SAVE ERROR },shuwa_tdengine_adapter:save(~p, ~p, ~p)",[ProductId, Devaddr, Data2])
+            after
+                pass
+            end;
 
         _ ->
             pass
@@ -245,7 +255,7 @@ create_Properties({Item,RawDataType,Description,Scan_instruct}) ->
                 <<"date">>;
             _ ->
                 <<"string">>
-    end,
+        end,
     #{<<"accessMode">> => <<"r">>,
         <<"dataForm">> =>
         #{<<"address">> => Scan_instruct,
