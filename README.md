@@ -37,5 +37,7 @@
 
 ![TD通道日志.png](http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/shuwa_tech/zh/blog/study/opc/TD%E9%80%9A%E9%81%93%E6%97%A5%E5%BF%97.png)
 
+具体使用操作以及更多信息可见[数蛙操作手册](https://tech.iotn2n.com/zh/blog/study/opc/)
+
 
 
