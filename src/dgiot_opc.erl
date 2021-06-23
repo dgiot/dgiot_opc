@@ -18,10 +18,10 @@
 
 -export([
     scan_opc/1,
-    read_opc/4,
+    read_opc/3,
     process_opc/2,
-    read_opc_ack/4,
-    scan_opc_ack/3,
+    read_opc_ack/3,
+    scan_opc_ack/4,
     create_changelist/1,
     create_final_Properties/1,
     create_x_y/1,
@@ -44,18 +44,18 @@ scan_opc(#{<<"OPCSEVER">> := OpcServer}) ->
     },
     shuwa_mqtt:publish(<<"opcserver">>, <<"dgiot_opc_da">>, jsx:encode(Payload)).
 
-read_opc(ChannelId, OpcServer, DevAddr,Instruct) ->
+read_opc(ChannelId, OpcServer, Instruct) ->
     Payload = #{
         <<"cmdtype">> => <<"read">>,
         <<"opcserver">> => OpcServer,
-        <<"group">> => DevAddr,
         <<"items">> => Instruct
     },
-    shuwa_bridge:send_log(ChannelId, "to_opc: ~p: ~p  ~ts ", [OpcServer, DevAddr, unicode:characters_to_list(Instruct)]),
+    shuwa_bridge:send_log(ChannelId, "to_opc: ~p: ~p  ~ts ", [OpcServer, unicode:characters_to_list(Instruct)]),
     shuwa_mqtt:publish(<<"opcserver">>, <<"dgiot_opc_da">>, jsx:encode(Payload)).
 
-scan_opc_ack(Payload,OpcServer,DevAddr) ->            %%---------- 用以创建组态、物模型。
+scan_opc_ack(Payload,OpcServer,Group,ProductId) ->            %%---------- 用以创建组态、物模型。
     Map = jsx:decode(Payload, [return_maps]),
+    {ok,#{<<"name">> :=ProductName}} = shuwa_parse:get_object(<<"Product">>,ProductId),
     Instruct = maps:fold(fun(K, V, Acc) ->
         IsSystem = lists:any(fun(E) ->
             lists:member(E, [<<"_System">>, <<"_Statistics">>, <<"_ThingWorx">>, <<"_DataLogger">>])
@@ -68,18 +68,29 @@ scan_opc_ack(Payload,OpcServer,DevAddr) ->            %%---------- 用以创建�
                     case X of
                         #{<<"ItemId">> := ItemId} ->
                             case binary:split(ItemId, <<$.>>, [global, trim]) of
-                                [_Project,_Device,Id] ->
-                                    case binary:split(Id, <<$_>>, [global, trim]) of
-                                        [Id] ->
-                                            get_instruct(Acc1,ItemId);
+                                [Project,_Device,Id] ->
+                                    case Project == ProductName of
+                                        true ->
+                                            case binary:split(Id, <<$_>>, [global, trim]) of
+                                                [Id] ->
+                                                    get_instruct(Acc1,ItemId);
+                                                _ ->
+                                                    Acc1
+                                            end;
                                         _ ->
                                             Acc1
                                     end;
-                                [_Project,_Device,_Id, Type] ->
-                                    case lists:member(Type, [ <<"_Description">>, <<"_RawDataType">>]) of
+
+                                [Project,_Device,_Id, Type] ->
+                                    case Project == ProductName of
                                         true ->
-                                            get_instruct(Acc1,ItemId);
-                                        false ->
+                                            case lists:member(Type, [ <<"_Description">>, <<"_RawDataType">>]) of
+                                                true ->
+                                                    get_instruct(Acc1,ItemId);
+                                                false ->
+                                                    Acc1
+                                            end;
+                                        _ ->
                                             Acc1
                                     end;
                                 _ -> Acc1
@@ -93,7 +104,7 @@ scan_opc_ack(Payload,OpcServer,DevAddr) ->            %%---------- 用以创建�
     Payload1 = #{
         <<"cmdtype">> => <<"read">>,
         <<"opcserver">> => OpcServer,
-        <<"group">> => DevAddr,
+        <<"group">> => Group,
         <<"items">> => Instruct
     },
 
@@ -110,7 +121,7 @@ get_instruct(Acc1,ItemId) ->
             <<Acc1/binary,",",ItemId/binary>>
     end.
 
-read_opc_ack(Payload, ProductId, DeviceId, Devaddr) ->
+read_opc_ack(Payload, ProductId, {DeviceId, Devaddr}) ->
     case jsx:decode(Payload, [return_maps]) of
         #{<<"status">> := 0} = Map0 -> %% opc read的情况
             [Map1 | _] = maps:values(maps:without([<<"status">>], Map0)),
@@ -126,39 +137,50 @@ read_opc_ack(Payload, ProductId, DeviceId, Devaddr) ->
             shuwa_product:load(ProductId),
             Data = maps:fold(fun(K, V, Acc) ->
                 case binary:split(K, <<$.>>, [global, trim]) of
-                    [_, _, K1] ->
-                        Name=
-                            case shuwa_shadow:lookup_prod(ProductId) of
-                                {ok, #{<<"thing">> := #{<<"properties">> := Properties}}}
-                                    ->
-                                    ALL_list= [{maps:get(<<"identifier">>, H),maps:get(<<"name">>, H)} || H <- Properties],
-                                    proplists:get_value(K1,ALL_list);
-                                _ ->
-                                    <<" ">> end,
+                    [_, DeviceName1, K1] ->
+                        case Devaddr == DeviceName1 of
+                            true ->
+                                Name=
+                                    case shuwa_shadow:lookup_prod(ProductId) of
+                                        {ok, #{<<"thing">> := #{<<"properties">> := Properties}}}
+                                            ->
+                                            ALL_list= [{maps:get(<<"identifier">>, H),maps:get(<<"name">>, H)} || H <- Properties],
+                                            proplists:get_value(K1,ALL_list);
+                                        _ ->
+                                            <<" ">> end,
 
-                        Unit=
-                            case shuwa_shadow:lookup_prod(ProductId) of
-                                {ok, #{<<"thing">> := #{<<"properties">> := Properties1}}}
-                                    ->
-                                    ALL_list1= [{maps:get(<<"identifier">>, H),maps:get(<<"dataType">>, H)} || H <- Properties1],
-                                    Map_datatype=proplists:get_value(K1,ALL_list1),
-                                    Specs=maps:get(<<"specs">>,Map_datatype),
-                                    maps:get(<<"unit">>,Specs);
-                                _ ->
-                                    <<" ">> end,
+                                Unit=
+                                    case shuwa_shadow:lookup_prod(ProductId) of
+                                        {ok, #{<<"thing">> := #{<<"properties">> := Properties1}}}
+                                            ->
+                                            ALL_list1= [{maps:get(<<"identifier">>, H),maps:get(<<"dataType">>, H)} || H <- Properties1],
+                                            Map_datatype=proplists:get_value(K1,ALL_list1),
+                                            Specs=maps:get(<<"specs">>,Map_datatype),
+                                            maps:get(<<"unit">>,Specs);
+                                        _ ->
+                                            <<" ">> end,
 
-                        V1 = binary:bin_to_list(Name),
-                        V2 = shuwa_utils:to_list(V),
-                        V1_unit =shuwa_utils:to_list(Unit),
-                        V3 = V1 ++ ": " ++ V2 ++ " " ++ V1_unit ,
-                        Acc#{K => V3};
+                                V1 = binary:bin_to_list(Name),
+                                V2 = shuwa_utils:to_list(V),
+                                V1_unit =shuwa_utils:to_list(Unit),
+                                V3 = V1 ++ ": " ++ V2 ++ " " ++ V1_unit ,
+                                Acc#{K => V3};
+                            _ ->
+                                Acc
+                        end;
+
                     _ -> Acc
                 end
                              end, #{}, Map2),
             Data2 = maps:fold(fun(K, V, Acc) ->
                 case binary:split(K, <<$.>>, [global, trim]) of
-                    [_, _, K1] ->
-                        Acc#{K1 => V};
+                    [_, DeviceName2, K1] ->
+                        case Devaddr == DeviceName2 of
+                            true ->
+                                Acc#{K1 => V};
+                            _ ->
+                                Acc
+                            end;
                     _ -> Acc
                 end
                               end, #{}, Map2),
@@ -224,7 +246,7 @@ push(Url, Data) ->
 
 
 %%scan后创建物模型
-create_Properties({Item,RawDataType,Description,Scan_instruct}) ->
+create_Properties({Item,RawDataType,Description}) ->
     DataType=
         case RawDataType of
             <<"Boolean">> ->
@@ -258,7 +280,7 @@ create_Properties({Item,RawDataType,Description,Scan_instruct}) ->
         end,
     #{<<"accessMode">> => <<"r">>,
         <<"dataForm">> =>
-        #{<<"address">> => Scan_instruct,
+        #{<<"address">> => <<"null">>,
             <<"byteorder">> => <<"big">>,
             <<"collection">> => <<"%s">>,
             <<"control">> => <<"%d">>, <<"data">> => <<"null">>,
@@ -313,14 +335,14 @@ create_config(List) ->
 
 
 
-create_lable({{_, _,Description,Scan_Instruct}, {X, Y}}) ->
+create_lable({{Item, _,Description}, {X, Y}}) ->
     #{<<"attrs">> =>
     #{
         <<"draggable">> => true,
         <<"fill">> => <<"#000000">>,
         <<"fontFamily">> => <<"Calibri">>,
         <<"fontSize">> => 20,
-        <<"id">> => Scan_Instruct,
+        <<"id">> => Item,
         <<"text">> =>Description , %% 太阳能板电压
         <<"type">> => <<"text">>,
         <<"x">> => X,
@@ -342,9 +364,11 @@ create_changelist(List_Data) ->
     Item = [{K,V}||{K,V} <- List_Data,jud1(K)],
     RawDataType = [{K,V}||{K,V} <- List_Data,jud2(K)],
     Description = [{K,V}||{K,V} <- List_Data,jud3(K)],
-    Scan_instruct = [{K,V}||{K,V} <- List_Data,jud4(K)],
+%%    Scan_instruct = [{K,V}||{K,V} <- List_Data,jud4(K)],
 %%    lager:info("Scan_instruct:~p",[RawDataType]),
-    [{Item1,RawDataType1,Description1,Scan_instruct1}||{K1,Item1} <- Item,{K2,RawDataType1} <- RawDataType,{K3,Description1} <- Description,{K4,Scan_instruct1} <- Scan_instruct,jud(K1,K2,K3,K4)].
+    List =[{Item1,RawDataType1,Description1}||{K1,Item1} <- Item,{K2,RawDataType1} <- RawDataType,{K3,Description1} <- Description,jud(K1,K2,K3)],
+    List1=lists:usort(List),
+    List1.
 
 jud1(X) ->
     case binary:split(X, <<$_>>, [global, trim])  of
@@ -370,29 +394,24 @@ jud3(X) ->
             false
     end.
 
-jud4(X) ->
-    case binary:split(X, <<$.>>, [global, trim])  of
-        [_,_,_] ->
-            true;
-        _ ->
-            false
-    end.
+%%jud4(X) ->
+%%    case binary:split(X, <<$.>>, [global, trim])  of
+%%        [_,_,_] ->
+%%            true;
+%%        _ ->
+%%            false
+%%    end.
 
-jud(K1,K2,K3,K4) ->
+jud(K1,K2,K3) ->
     [Key2,_]= binary:split(K2, <<$_>>, [global, trim]),
     [Key3,_]= binary:split(K3, <<$_>>, [global, trim]),
-    [_,_,Key4]= binary:split(K4, <<$.>>, [global, trim]),
+%%    [_,_,Key4]= binary:split(K4, <<$.>>, [global, trim]),
 %%    lager:info("------------Key:~p",[Key4]),
     case Key2 == Key3 of
         true ->
             case K1 == Key2 of
                 true ->
-                    case K1 == Key4 of
-                        true ->
-                            true;
-                        false ->
-                            false
-                    end;
+                    true;
                 false ->
                     false
             end;
