@@ -61,7 +61,7 @@
             zh => <<"OPC分组"/utf8>>
         }
     },
-     <<"ico">> => #{
+    <<"ico">> => #{
         order => 102,
         type => string,
         required => false,
@@ -84,13 +84,13 @@ start(ChannelId, ChannelArgs) ->
 
 %% 通道初始化
 init(?TYPE, ChannelId, ChannelArgs) ->
-    {ProductId, DeviceId, Devaddr} = get_product(ChannelId),
+    {ProductId, Deviceinfo_list}= get_product(ChannelId), %Deviceinfo_list = [{DeviceId1,Devaddr1},{DeviceId2,Devaddr2}...]
     State = #state{
         id = ChannelId,
         env = ChannelArgs#{
             <<"productid">> => ProductId,
-            <<"deviceid">> => DeviceId,
-            <<"devaddr">> => Devaddr}
+            <<"deviceinfo_list">> => Deviceinfo_list
+            }
     },
     {ok, State}.
 
@@ -118,23 +118,27 @@ handle_message(scan_opc, #state{env = Env} = State) ->
 %% {"cmdtype":"read",  "opcserver": "ControlEase.OPC.2",   "group":"小闭式",  "items": "INSPEC.小闭式台位计测.U_OPC,INSPEC.小闭式台位计测.P_OPC,
 %%    INSPEC.小闭式台位计测.I_OPC,INSPEC.小闭式台位计测.DJZS_OPC,INSPEC.小闭式台位计测.SWD_OPC,
 %%    INSPEC.小闭式台位计测.DCLL_OPC,INSPEC.小闭式台位计测.JKYL_OPC,INSPEC.小闭式台位计测.CKYL_OPC","noitemid":"000"}
-handle_message(read_opc, #state{id = ChannelId, step = read_cycle ,env = #{<<"OPCSEVER">> := OpcServer, <<"productid">> := ProductId,<<"devaddr">> := DevAddr}} = State) ->
+handle_message(read_opc, #state{id = ChannelId, step = read_cycle ,env = #{<<"OPCSEVER">> := OpcServer, <<"productid">> := ProductId,<<"deviceinfo_list">> := Deviceinfo_list}} = State) ->
+    {ok,#{<<"name">> :=ProductName}} = shuwa_parse:get_object(<<"Product">>,ProductId),
+    DeviceName_list = [get_DevAddr(X)|| X <- Deviceinfo_list],
     case shuwa_shadow:lookup_prod(ProductId) of
         {ok, #{<<"thing">> := #{<<"properties">> := Properties}}} ->
-            Item = [maps:get(<<"dataForm">>, H) || H <- Properties],
-            Item2 =[maps:get(<<"address">>, H) || H <- Item],
+            Item2 = [maps:get(<<"identifier">>, H) || H <- Properties],
             Identifier_item = [binary:bin_to_list(H) || H <- Item2],
-            Instruct = [X ++ "," || X <- Identifier_item],
+            Instruct = [binary:bin_to_list(ProductName) ++ "." ++ binary:bin_to_list(Y) ++ "." ++ X ++ "," || X <- Identifier_item,Y <- DeviceName_list],
             Instruct1 = lists:droplast(lists:concat(Instruct)),
             Instruct2 = erlang:list_to_binary(Instruct1),
-            dgiot_opc:read_opc(ChannelId, OpcServer, DevAddr,Instruct2);
+            dgiot_opc:read_opc(ChannelId, OpcServer,Instruct2);
         _ ->
             pass
     end,
     {ok, State#state{step = read}};
 
+
+
 %%{"status":0,"小闭式":{"INSPEC.小闭式台位计测.U_OPC":380,"INSPEC.小闭式台位计测.P_OPC":30}}
 handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = scan, env = Env} = State) ->
+    #{<<"productid">> := ProductId} = Env,
     Payload = shuwa_mqtt:get_payload(Msg),
     #{<<"OPCSEVER">> := OpcServer,<<"OPCGROUP">> := Group } = Env,
     shuwa_bridge:send_log(ChannelId, "from opc scan: ~p  ", [Payload]),
@@ -142,7 +146,7 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = scan, env =
         false ->
             {ok, State};
         true ->
-            dgiot_opc:scan_opc_ack(Payload,OpcServer, Group),
+            dgiot_opc:scan_opc_ack(Payload,OpcServer, Group,ProductId),
             {ok, State#state{step = pre_read}}
     end;
 
@@ -172,9 +176,11 @@ handle_message({deliver, _Topic, Msg}, #state{ step = pre_read, env = Env} = Sta
                                 Acc#{K => K};
                             _ -> Acc
                         end
-                                      end, #{}, Map2),
+                                     end, #{}, Map2),
                     List_Data = maps:to_list(Data),
-                    Need_update_list = dgiot_opc:create_changelist(List_Data),
+                    Need_update_list0 = dgiot_opc:create_changelist(List_Data),
+                    Need_update_list =unique_1(Need_update_list0),
+%%                    lager:info("--------------------Need_update_list:~p",[Need_update_list]),
                     Final_Properties = dgiot_opc:create_final_Properties(Need_update_list),
                     Topo_para=lists:zip(Need_update_list,dgiot_opc:create_x_y(erlang:length(Need_update_list))),
                     New_config = dgiot_opc:create_config(dgiot_opc:change_config(Topo_para)),
@@ -197,13 +203,13 @@ handle_message({deliver, _Topic, Msg}, #state{ step = pre_read, env = Env} = Sta
 
 handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = read, env = Env} = State) ->
     Payload = shuwa_mqtt:get_payload(Msg),
-    #{<<"productid">> := ProductId, <<"deviceid">> := DeviceId, <<"devaddr">> := Devaddr} = Env,
+    #{<<"productid">> := ProductId, <<"deviceinfo_list">> := Deviceinfo_list} = Env,  %Deviceinfo_list = [{DeviceId1,Devaddr1},{DeviceId2,Devaddr2}...]
     shuwa_bridge:send_log(ChannelId, "from opc read: ~p  ", [jsx:decode(Payload, [return_maps])]),
     case jsx:is_json(Payload) of
         false ->
             pass;
         true ->
-            dgiot_opc:read_opc_ack(Payload, ProductId, DeviceId, Devaddr),
+            [dgiot_opc:read_opc_ack(Payload, ProductId,X) || X<-Deviceinfo_list],
             erlang:send_after(1000 * 10, self(), read_opc)
 
     end,
@@ -220,15 +226,33 @@ stop(ChannelType, ChannelId, _State) ->
 get_product(ChannelId) ->
     case shuwa_bridge:get_products(ChannelId) of
         {ok, _, [ProductId | _]} ->
-            Filter = #{<<"where">> => #{<<"product">> => ProductId}, <<"limit">> => 1},
+            Filter = #{<<"where">> => #{<<"product">> => ProductId},<<"limit">> => 10},
             case shuwa_parse:query_object(<<"Device">>, Filter) of
-                {ok, #{<<"results">> := Results}} when length(Results) == 1 ->
-                    [#{<<"objectId">> := DeviceId, <<"devaddr">> := Devaddr} | _] = Results,
-                    {ProductId, DeviceId, Devaddr};
+                {ok, #{<<"results">> := Results}} ->
+                    Deviceinfo_list = [get_deviceinfo(X)||X<-Results],
+                    {ProductId, Deviceinfo_list};
                 _ ->
-                    {<<>>, <<>>, <<>>}
+                    {<<>>, [{<<>>, <<>>}]}
             end;
         _ ->
-            {<<>>, <<>>, <<>>}
+            {<<>>, [{<<>>, <<>>}]}
     end.
 
+get_deviceinfo(X) ->
+    #{<<"objectId">> := DeviceId, <<"devaddr">> := Devaddr} = X,
+    {DeviceId,Devaddr}.
+
+
+get_DevAddr({_DeviceId,DevAddr}) ->
+    DevAddr.
+
+unique_1(List)->
+    unique_1(List, []).
+
+
+unique_1([H|L], ResultList) ->
+    case lists:member(H, ResultList) of
+        true -> unique_1(L, ResultList);
+        false -> unique_1(L, [H|ResultList])
+    end;
+unique_1([], ResultList) -> ResultList.
