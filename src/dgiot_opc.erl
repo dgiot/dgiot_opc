@@ -18,10 +18,9 @@
 
 -export([
     scan_opc/1,
-    read_opc/3,
-    process_opc/2,
+    read_opc/4,
     read_opc_ack/3,
-    scan_opc_ack/4,
+    scan_opc_ack/5,
     create_changelist/1,
     create_final_Properties/1,
     create_x_y/1,
@@ -37,23 +36,23 @@
 %%"cmdtype":"scan",
 %%"opcserver":"Kepware.KEPServerEX.V6"
 %%}
-scan_opc(#{<<"OPCSEVER">> := OpcServer}) ->
+scan_opc(#{<<"OPCSEVER">> := OpcServer,<<"Topic">> := Topic }) ->
     Payload = #{
         <<"cmdtype">> => <<"scan">>,
         <<"opcserver">> => OpcServer
     },
-    shuwa_mqtt:publish(<<"opcserver">>, <<"dgiot_opc_da">>, jsx:encode(Payload)).
+    shuwa_mqtt:publish(<<"opcserver">>, Topic, jsx:encode(Payload)).
 
-read_opc(ChannelId, OpcServer, Instruct) ->
+read_opc(ChannelId, OpcServer,Topic, Instruct) ->
     Payload = #{
         <<"cmdtype">> => <<"read">>,
         <<"opcserver">> => OpcServer,
         <<"items">> => Instruct
     },
     shuwa_bridge:send_log(ChannelId, "to_opc: ~p: ~p  ~ts ", [OpcServer, unicode:characters_to_list(Instruct)]),
-    shuwa_mqtt:publish(<<"opcserver">>, <<"dgiot_opc_da">>, jsx:encode(Payload)).
+    shuwa_mqtt:publish(<<"opcserver">>, Topic, jsx:encode(Payload)).
 
-scan_opc_ack(Payload,OpcServer,Group,ProductId) ->            %%---------- 用以创建组态、物模型。
+scan_opc_ack(Payload,OpcServer,Topic,Group,ProductId) ->            %%---------- 用以创建组态、物模型。
     Map = jsx:decode(Payload, [return_maps]),
     {ok,#{<<"name">> :=ProductName}} = shuwa_parse:get_object(<<"Product">>,ProductId),
     Instruct = maps:fold(fun(K, V, Acc) ->
@@ -108,7 +107,7 @@ scan_opc_ack(Payload,OpcServer,Group,ProductId) ->            %%---------- 用�
         <<"items">> => Instruct
     },
 
-    shuwa_mqtt:publish(<<"opcserver">>, <<"dgiot_opc_da">>, jsx:encode(Payload1)).
+    shuwa_mqtt:publish(<<"opcserver">>, Topic, jsx:encode(Payload1)).
 
 
 
@@ -210,39 +209,10 @@ read_opc_ack(Payload, ProductId, {DeviceId, Devaddr}) ->
             pass
     end.
 
-process_opc(ChannelId, Payload) ->
-    [DevAddr | _] = maps:keys(Payload),
-    Items = maps:get(DevAddr, Payload, #{}),
-    case shuwa_data:get({dgiot_opc, DevAddr}) of
-        not_find ->
-            pass;
-        ProductId ->
-            NewTopic = <<"thing/", ProductId/binary, "/", DevAddr/binary, "/post">>,
-            shuwa_bridge:send_log(ChannelId, "to_task: ~ts", [unicode:characters_to_list(jsx:encode(Items))]),
-            shuwa_mqtt:publish(DevAddr, NewTopic, jsx:encode(Items))
-%%        _ -> pass
-    end.
-
-get_optshape(ProductId, DeviceId, Payload) ->
-    Shape =
-        maps:fold(fun(K, V, Acc) ->
-            Text = dgiot_topo:get_name(ProductId, K, shuwa_utils:to_binary(V)),
-            Type =
-                case shuwa_data:get({shapetype, shuwa_parse:get_shapeid(ProductId, K)}) of
-                    not_find ->
-                        <<"text">>;
-                    Type1 ->
-                        Type1
-                end,
-            Acc ++ [#{<<"id">> => shuwa_parse:get_shapeid(DeviceId, K), <<"text">> => Text, <<"type">> => Type}]
-                  end, [], Payload),
-    base64:encode(jsx:encode(#{<<"konva">> => Shape})).
 
 
-push(Url, Data) ->
-    Url1 = shuwa_utils:to_list(Url),
-    Data1 = shuwa_utils:to_list(jsx:encode(Data)),
-    httpc:request(post, {Url1, [], "application/json", Data1}, [], []).
+
+
 
 
 %%scan后创建物模型
