@@ -61,6 +61,18 @@
             zh => <<"OPC分组"/utf8>>
         }
     },
+    <<"Topic">> => #{
+        order => 3,
+        type => string,
+        required => true,
+        default => <<"dgiot_opc_da"/utf8>>,
+        title => #{
+            zh => <<"订阅Topic"/utf8>>
+        },
+        description => #{
+            zh => <<"订阅Topic"/utf8>>
+        }
+    },
     <<"ico">> => #{
         order => 102,
         type => string,
@@ -96,8 +108,11 @@ init(?TYPE, ChannelId, ChannelArgs) ->
 
 %% 初始化池子
 handle_init(State) ->
-    shuwa_mqtt:subscribe(<<"dgiot_opc_da_ack">>),
-    shuwa_mqtt:subscribe(<<"dgiot_opc_da_scan">>),
+    #state{env = #{<<"Topic">> := Topic}} = State,
+    Topic_ACK = binary:bin_to_list(Topic) ++ "_ack",
+    Topic_SCAN = binary:bin_to_list(Topic) ++ "_scan",
+    shuwa_mqtt:subscribe( erlang:list_to_binary(Topic_ACK)),
+    shuwa_mqtt:subscribe( erlang:list_to_binary(Topic_SCAN)),
     shuwa_parse:subscribe(<<"Device">>, post),
     erlang:send_after(1000 * 5, self(), scan_opc),
     {ok, State}.
@@ -113,12 +128,14 @@ handle_message({sync_parse, Args}, State) ->
 
 handle_message(scan_opc, #state{env = Env} = State) ->
     dgiot_opc:scan_opc(Env),
+%%    #{<<"Topic">> := Topic} = Env,
+%%    lager:info("------------------------Env:~p",[Topic]),
     {ok, State#state{step = scan}};
 
 %% {"cmdtype":"read",  "opcserver": "ControlEase.OPC.2",   "group":"小闭式",  "items": "INSPEC.小闭式台位计测.U_OPC,INSPEC.小闭式台位计测.P_OPC,
 %%    INSPEC.小闭式台位计测.I_OPC,INSPEC.小闭式台位计测.DJZS_OPC,INSPEC.小闭式台位计测.SWD_OPC,
 %%    INSPEC.小闭式台位计测.DCLL_OPC,INSPEC.小闭式台位计测.JKYL_OPC,INSPEC.小闭式台位计测.CKYL_OPC","noitemid":"000"}
-handle_message(read_opc, #state{id = ChannelId, step = read_cycle ,env = #{<<"OPCSEVER">> := OpcServer, <<"productid">> := ProductId,<<"deviceinfo_list">> := Deviceinfo_list}} = State) ->
+handle_message(read_opc, #state{id = ChannelId, step = read_cycle ,env = #{<<"OPCSEVER">> := OpcServer,<<"Topic">> := Topic, <<"productid">> := ProductId,<<"deviceinfo_list">> := Deviceinfo_list}} = State) ->
     {ok,#{<<"name">> :=ProductName}} = shuwa_parse:get_object(<<"Product">>,ProductId),
     DeviceName_list = [get_DevAddr(X)|| X <- Deviceinfo_list],
     case shuwa_shadow:lookup_prod(ProductId) of
@@ -128,7 +145,7 @@ handle_message(read_opc, #state{id = ChannelId, step = read_cycle ,env = #{<<"OP
             Instruct = [binary:bin_to_list(ProductName) ++ "." ++ binary:bin_to_list(Y) ++ "." ++ X ++ "," || X <- Identifier_item,Y <- DeviceName_list],
             Instruct1 = lists:droplast(lists:concat(Instruct)),
             Instruct2 = erlang:list_to_binary(Instruct1),
-            dgiot_opc:read_opc(ChannelId, OpcServer,Instruct2);
+            dgiot_opc:read_opc(ChannelId, OpcServer,Topic,Instruct2);
         _ ->
             pass
     end,
@@ -138,7 +155,7 @@ handle_message(read_opc, #state{id = ChannelId, step = read_cycle ,env = #{<<"OP
 
 %%{"status":0,"小闭式":{"INSPEC.小闭式台位计测.U_OPC":380,"INSPEC.小闭式台位计测.P_OPC":30}}
 handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = scan, env = Env} = State) ->
-    #{<<"productid">> := ProductId} = Env,
+    #{<<"productid">> := ProductId,<<"Topic">> :=Topic} = Env,
     Payload = shuwa_mqtt:get_payload(Msg),
     #{<<"OPCSEVER">> := OpcServer,<<"OPCGROUP">> := Group } = Env,
     shuwa_bridge:send_log(ChannelId, "from opc scan: ~p  ", [Payload]),
@@ -146,7 +163,7 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = scan, env =
         false ->
             {ok, State};
         true ->
-            dgiot_opc:scan_opc_ack(Payload,OpcServer, Group,ProductId),
+            dgiot_opc:scan_opc_ack(Payload,OpcServer,Topic, Group,ProductId),
             {ok, State#state{step = pre_read}}
     end;
 
