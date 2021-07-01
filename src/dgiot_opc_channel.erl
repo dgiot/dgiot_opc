@@ -115,12 +115,22 @@ handle_init(State) ->
     shuwa_mqtt:subscribe( erlang:list_to_binary(Topic_SCAN)),
     shuwa_parse:subscribe(<<"Device">>, post),
     erlang:send_after(1000 * 5, self(), scan_opc),
+    erlang:send_after(1000*60*10,self(),offline_jud),
     {ok, State}.
+
+
 
 %% 通道消息处理,注意：进程池调用
 handle_event(EventId, Event, _State) ->
     lager:info("channel ~p, ~p", [EventId, Event]),
     ok.
+
+%%设备下线状态修改
+handle_message(offline_jud, #state{env = Env} = State) ->
+    erlang:send_after(1000*60*10,self(),offline_jud),
+    #{<<"deviceinfo_list">> := Deviceinfo_list} = Env,
+    [offline_modify(DeviceID) ||{DeviceID,_} <- Deviceinfo_list],
+    {ok, State};
 
 handle_message({sync_parse, Args}, State) ->
     lager:info("sync_parse ~p", [Args]),
@@ -273,3 +283,24 @@ unique_1([H|L], ResultList) ->
         false -> unique_1(L, [H|ResultList])
     end;
 unique_1([], ResultList) -> ResultList.
+
+offline_jud(DeviceID) ->
+    Url = "http://prod.iotn2n.com/iotapi/device/" ++ shuwa_utils:to_list(DeviceID) ++ "?order=-createdAt&limit=1&skip=0" ,
+    AuthHeader = [{"authorization","Basic ZGdpb3RfYWRtaW46ZGdpb3RfYWRtaW4="}],
+    {ok,{_,_,Result1}} = httpc:request(get,{[Url],AuthHeader},[],[]),
+    timer:sleep(1000*60),
+    {ok,{_,_,Result2}} = httpc:request(get,{[Url],AuthHeader},[],[]),
+    case Result1 == Result2 of
+        true ->
+            true;
+        false ->
+            false
+    end.
+
+offline_modify(DeviceID) ->
+    case offline_jud(DeviceID) of
+        true ->
+            shuwa_parse:update_object(<<"Device">>, DeviceID, #{<<"status">> => <<"OFFLINE">>});
+        false ->
+            pass
+    end.
