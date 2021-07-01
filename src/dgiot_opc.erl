@@ -189,6 +189,13 @@ read_opc_ack(Payload, ProductId, {DeviceId, Devaddr}) ->
             after
                 pass
             end,
+            %% --------------------------------  数据存TD库
+            try shuwa_tdengine_adapter:save(ProductId, Devaddr, Data2)
+            catch _:_ ->
+                lager:info("{ TD SAVE ERROR },shuwa_tdengine_adapter:save(~p, ~p, ~p)",[ProductId, Devaddr, Data2])
+            after
+                pass
+            end,
             %%  -------------------------------- 设备上线状态修改
             case shuwa_data:get({dev, status, DeviceId}) of
                 not_find ->
@@ -196,13 +203,6 @@ read_opc_ack(Payload, ProductId, {DeviceId, Devaddr}) ->
                     shuwa_parse:update_object(<<"Device">>, DeviceId, #{<<"status">> => <<"ONLINE">>});
                 _ -> pass
 
-            end,
-            %% --------------------------------  数据存TD库
-            try shuwa_tdengine_adapter:save(ProductId, Devaddr, Data2)
-            catch _:_ ->
-                lager:info("{ TD SAVE ERROR },shuwa_tdengine_adapter:save(~p, ~p, ~p)",[ProductId, Devaddr, Data2])
-            after
-                pass
             end;
 
         _ ->
