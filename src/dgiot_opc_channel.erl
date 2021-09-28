@@ -14,10 +14,12 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 -module(dgiot_opc_channel).
--behavior(shuwa_channelx).
+-behavior(dgiot_channelx).
 -define(TYPE, <<"DGIOTOPC">>).
 -author("johnliu").
--record(state, {id, step , env = #{}}).
+-include_lib("dgiot_bridge/include/dgiot_bridge.hrl").
+-include_lib("dgiot/include/logger.hrl").
+-record(state, {id, step, env = #{}}).
 
 %% API
 -export([start/2]).
@@ -25,9 +27,10 @@
 
 
 %% 注册通道类型
--channel(?TYPE).
 -channel_type(#{
-    type => 1,
+
+    cType => ?TYPE,
+    type => ?PROTOCOL_CHL,
     title => #{
         zh => <<"OPC采集通道"/utf8>>
     },
@@ -90,7 +93,7 @@
 }).
 
 start(ChannelId, ChannelArgs) ->
-    shuwa_channelx:add(?TYPE, ChannelId, ?MODULE, ChannelArgs#{
+    dgiot_channelx:add(?TYPE, ChannelId, ?MODULE, ChannelArgs#{
         <<"Size">> => 1
     }).
 
@@ -111,9 +114,9 @@ handle_init(State) ->
     #state{env = #{<<"Topic">> := Topic}} = State,
     Topic_ACK = binary:bin_to_list(Topic) ++ "_ack",
     Topic_SCAN = binary:bin_to_list(Topic) ++ "_scan",
-    shuwa_mqtt:subscribe( erlang:list_to_binary(Topic_ACK)),
-    shuwa_mqtt:subscribe( erlang:list_to_binary(Topic_SCAN)),
-    shuwa_parse:subscribe(<<"Device">>, post),
+    dgiot_mqtt:subscribe( erlang:list_to_binary(Topic_ACK)),
+    dgiot_mqtt:subscribe( erlang:list_to_binary(Topic_SCAN)),
+    dgiot_parse:subscribe(<<"Device">>, post),
     erlang:send_after(1000 * 5, self(), scan_opc),
     erlang:send_after(1000*60*10,self(),offline_jud),
     {ok, State}.
@@ -122,7 +125,7 @@ handle_init(State) ->
 
 %% 通道消息处理,注意：进程池调用
 handle_event(EventId, Event, _State) ->
-    lager:info("channel ~p, ~p", [EventId, Event]),
+    ?LOG(info, "channel ~p, ~p", [EventId, Event]),
     ok.
 
 %%设备下线状态修改
@@ -133,22 +136,22 @@ handle_message(offline_jud, #state{env = Env} = State) ->
     {ok, State};
 
 handle_message({sync_parse, Args}, State) ->
-    lager:info("sync_parse ~p", [Args]),
+    ?LOG(info,"sync_parse ~p", [Args]),
     {ok, State};
 
 handle_message(scan_opc, #state{env = Env} = State) ->
     dgiot_opc:scan_opc(Env),
 %%    #{<<"Topic">> := Topic} = Env,
-%%    lager:info("------------------------Env:~p",[Topic]),
+%%    ?LOG(info,"------------------------Env:~p",[Topic]),
     {ok, State#state{step = scan}};
 
 %% {"cmdtype":"read",  "opcserver": "ControlEase.OPC.2",   "group":"小闭式",  "items": "INSPEC.小闭式台位计测.U_OPC,INSPEC.小闭式台位计测.P_OPC,
 %%    INSPEC.小闭式台位计测.I_OPC,INSPEC.小闭式台位计测.DJZS_OPC,INSPEC.小闭式台位计测.SWD_OPC,
 %%    INSPEC.小闭式台位计测.DCLL_OPC,INSPEC.小闭式台位计测.JKYL_OPC,INSPEC.小闭式台位计测.CKYL_OPC","noitemid":"000"}
 handle_message(read_opc, #state{id = ChannelId, step = read_cycle ,env = #{<<"OPCSEVER">> := OpcServer,<<"Topic">> := Topic, <<"productid">> := ProductId,<<"deviceinfo_list">> := Deviceinfo_list}} = State) ->
-    {ok,#{<<"name">> :=ProductName}} = shuwa_parse:get_object(<<"Product">>,ProductId),
+    {ok,#{<<"name">> :=ProductName}} = dgiot_parse:get_object(<<"Product">>,ProductId),
     DeviceName_list = [get_DevAddr(X)|| X <- Deviceinfo_list],
-    case shuwa_shadow:lookup_prod(ProductId) of
+    case dgiot_device:lookup_prod(ProductId) of
         {ok, #{<<"thing">> := #{<<"properties">> := Properties}}} ->
             Item2 = [maps:get(<<"identifier">>, H) || H <- Properties],
             Identifier_item = [binary:bin_to_list(H) || H <- Item2],
@@ -161,14 +164,12 @@ handle_message(read_opc, #state{id = ChannelId, step = read_cycle ,env = #{<<"OP
     end,
     {ok, State#state{step = read}};
 
-
-
 %%{"status":0,"小闭式":{"INSPEC.小闭式台位计测.U_OPC":380,"INSPEC.小闭式台位计测.P_OPC":30}}
 handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = scan, env = Env} = State) ->
     #{<<"productid">> := ProductId,<<"Topic">> :=Topic} = Env,
-    Payload = shuwa_mqtt:get_payload(Msg),
+    Payload = dgiot_mqtt:get_payload(Msg),
     #{<<"OPCSEVER">> := OpcServer,<<"OPCGROUP">> := Group } = Env,
-    shuwa_bridge:send_log(ChannelId, "from opc scan: ~p  ", [Payload]),
+    dgiot_bridge:send_log(ChannelId, "from opc scan: ~p  ", [Payload]),
     case jsx:is_json(Payload) of
         false ->
             {ok, State};
@@ -178,7 +179,7 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = scan, env =
     end;
 
 handle_message({deliver, _Topic, Msg}, #state{ step = pre_read, env = Env} = State) ->
-    Payload = shuwa_mqtt:get_payload(Msg),
+    Payload = dgiot_mqtt:get_payload(Msg),
     #{<<"productid">> := ProductId} = Env,
     case jsx:is_json(Payload) of
         false ->
@@ -207,17 +208,17 @@ handle_message({deliver, _Topic, Msg}, #state{ step = pre_read, env = Env} = Sta
                     List_Data = maps:to_list(Data),
                     Need_update_list0 = dgiot_opc:create_changelist(List_Data),
                     Need_update_list =unique_1(Need_update_list0),
-%%                    lager:info("--------------------Need_update_list:~p",[Need_update_list]),
+%%                    ?LOG(info,"--------------------Need_update_list:~p",[Need_update_list]),
                     Final_Properties = dgiot_opc:create_final_Properties(Need_update_list),
                     Topo_para=lists:zip(Need_update_list,dgiot_opc:create_x_y(erlang:length(Need_update_list))),
                     New_config = dgiot_opc:create_config(dgiot_opc:change_config(Topo_para)),
-                    shuwa_product:load(ProductId),
-                    case shuwa_shadow:lookup_prod(ProductId) of
+                    dgiot_product:load(ProductId),
+                    case dgiot_device:lookup_prod(ProductId) of
                         {ok, #{<<"thing">> := #{<<"properties">> := Properties}}} ->
                             case erlang:length(Properties)  of
                                 0 ->
-                                    shuwa_parse:update_object(<<"Product">>, ProductId, #{<<"config">> =>  New_config}),
-                                    shuwa_parse:update_object(<<"Product">>, ProductId, #{<<"thing">> => #{<<"properties">> => Final_Properties}});
+                                    dgiot_parse:update_object(<<"Product">>, ProductId, #{<<"config">> =>  New_config}),
+                                    dgiot_parse:update_object(<<"Product">>, ProductId, #{<<"thing">> => #{<<"properties">> => Final_Properties}});
                                 _ ->
                                     pass
                             end
@@ -229,9 +230,9 @@ handle_message({deliver, _Topic, Msg}, #state{ step = pre_read, env = Env} = Sta
 
 
 handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = read, env = Env} = State) ->
-    Payload = shuwa_mqtt:get_payload(Msg),
+    Payload = dgiot_mqtt:get_payload(Msg),
     #{<<"productid">> := ProductId, <<"deviceinfo_list">> := Deviceinfo_list} = Env,  %Deviceinfo_list = [{DeviceId1,Devaddr1},{DeviceId2,Devaddr2}...]
-    shuwa_bridge:send_log(ChannelId, "from opc read: ~p  ", [jsx:decode(Payload, [return_maps])]),
+    dgiot_bridge:send_log(ChannelId, "from opc read: ~p  ", [jsx:decode(Payload, [return_maps])]),
     case jsx:is_json(Payload) of
         false ->
             pass;
@@ -243,18 +244,18 @@ handle_message({deliver, _Topic, Msg}, #state{id = ChannelId, step = read, env =
     {ok, State#state{step = read_cycle}};
 
 handle_message(Message, State) ->
-    lager:info("channel ~p", [Message]),
+    ?LOG(info,"channel ~p", [Message]),
     {ok, State}.
 
 stop(ChannelType, ChannelId, _State) ->
-    lager:info("channel stop ~p,~p", [ChannelType, ChannelId]),
+    ?LOG(info,"channel stop ~p,~p", [ChannelType, ChannelId]),
     ok.
 
 get_product(ChannelId) ->
-    case shuwa_bridge:get_products(ChannelId) of
+    case dgiot_bridge:get_products(ChannelId) of
         {ok, _, [ProductId | _]} ->
             Filter = #{<<"where">> => #{<<"product">> => ProductId},<<"limit">> => 10},
-            case shuwa_parse:query_object(<<"Device">>, Filter) of
+            case dgiot_parse:query_object(<<"Device">>, Filter) of
                 {ok, #{<<"results">> := Results}} ->
                     Deviceinfo_list = [get_deviceinfo(X)||X<-Results],
                     {ProductId, Deviceinfo_list};
@@ -285,7 +286,7 @@ unique_1([H|L], ResultList) ->
 unique_1([], ResultList) -> ResultList.
 
 offline_jud(DeviceID) ->
-    Url = "http://prod.iotn2n.com/iotapi/device/" ++ shuwa_utils:to_list(DeviceID) ++ "?order=-createdAt&limit=1&skip=0" ,
+    Url = "http://prod.iotn2n.com/iotapi/device/" ++ dgiot_utils:to_list(DeviceID) ++ "?order=-createdAt&limit=1&skip=0" ,
     AuthHeader = [{"authorization","Basic ZGdpb3RfYWRtaW46ZGdpb3RfYWRtaW4="}],
     {ok,{_,_,Result1}} = httpc:request(get,{[Url],AuthHeader},[],[]),
     timer:sleep(1000*60),
@@ -300,7 +301,7 @@ offline_jud(DeviceID) ->
 offline_modify(DeviceID) ->
     case offline_jud(DeviceID) of
         true ->
-            shuwa_parse:update_object(<<"Device">>, DeviceID, #{<<"status">> => <<"OFFLINE">>});
+            dgiot_parse:update_object(<<"Device">>, DeviceID, #{<<"status">> => <<"OFFLINE">>});
         false ->
             pass
     end.
